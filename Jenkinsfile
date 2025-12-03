@@ -2,7 +2,6 @@ pipeline {
   agent any
   environment { IMAGE = 'cloudflowstocks/web' }
   stages {
-    stage('Checkout') { steps { checkout scm } }
 
     // Run npm inside a node container so Jenkins host doesn't need npm installed
     stage('Install (inside node container)') {
