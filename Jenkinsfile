@@ -2,12 +2,16 @@ pipeline {
   agent any
   environment { IMAGE = 'cloudflowstocks/web' }
   stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
+    stage('Checkout') { steps { checkout scm } }
 
-    stage('Install') {
-      steps { sh 'cd app && npm ci' }
+    // Run npm inside a node container so Jenkins host doesn't need npm installed
+    stage('Install (inside node container)') {
+      steps {
+        sh '''
+          echo "Running npm ci inside node:20-slim"
+          docker run --rm -v "$PWD/app":/work -w /work node:20-slim sh -c "npm ci"
+        '''
+      }
     }
 
     stage('Build') {
@@ -25,12 +29,12 @@ pipeline {
       steps {
         sh "docker run -d --rm -p 8080:8080 --name cfstest ${IMAGE}:${TAG}"
         sh 'sleep 2'
-        sh 'node run_test.js'
+        sh 'node run_test.js'    // this runs on Jenkins host - it accesses localhost:8080
         sh 'docker stop cfstest || true'
       }
     }
 
-    stage('LaTeX') {
+    stage('LaTeX (inside container)') {
       steps {
         sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || true'
       }
@@ -50,14 +54,8 @@ pipeline {
   }
 
   post {
-    always {
-      echo 'Done'
-    }
-    success {
-      echo "SUCCESS: ${env.TAG}"
-    }
-    failure {
-      echo 'FAILED'
-    }
+    always { echo 'Done' }
+    success { echo "SUCCESS: ${env.TAG}" }
+    failure { echo 'FAILED' }
   }
 }
