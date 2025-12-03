@@ -1,19 +1,26 @@
 pipeline {
   agent any
-  environment { IMAGE="cloudflowstocks/web" }
+  environment { IMAGE = 'cloudflowstocks/web' }
   stages {
-    stage('Checkout') { steps { checkout scm } }
-    stage('Install')  { steps { sh 'cd app && npm ci' } }
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('Install') {
+      steps { sh 'cd app && npm ci' }
+    }
+
     stage('Build') {
       steps {
         script {
-          def c = sh(script:"git rev-list --count HEAD", returnStdout:true).trim()
+          def changeCount = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
           def base = readFile('VERSION').trim()
-          env.TAG = "${base}.${c}"
+          env.TAG = "${base}.${changeCount}"
           sh "docker build -t ${IMAGE}:${TAG} ."
         }
       }
     }
+
     stage('Test') {
       steps {
         sh "docker run -d --rm -p 8080:8080 --name cfstest ${IMAGE}:${TAG}"
@@ -22,13 +29,35 @@ pipeline {
         sh 'docker stop cfstest || true'
       }
     }
-    stage('LaTeX') { steps { sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || true' } }
+
+    stage('LaTeX') {
+      steps {
+        sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || true'
+      }
+    }
+
     stage('Package') {
       steps {
-        sh "mkdir -p out && cp -r app out && echo Version:${TAG} > out/VERSION.txt && zip -r deploy-${TAG}.zip out"
+        sh """
+          mkdir -p out
+          cp -r app out
+          echo Version:${TAG} > out/VERSION.txt
+          zip -r deploy-${TAG}.zip out
+        """
         archiveArtifacts artifacts: "deploy-${TAG}.zip", fingerprint: true
       }
     }
   }
-  post { always { echo \"Done\" } }
+
+  post {
+    always {
+      echo 'Done'
+    }
+    success {
+      echo "SUCCESS: ${env.TAG}"
+    }
+    failure {
+      echo 'FAILED'
+    }
+  }
 }
