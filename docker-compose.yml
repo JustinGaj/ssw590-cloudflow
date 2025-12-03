@@ -1,15 +1,6 @@
-version: "3.8"
+version: '3.8'
 services:
-
-  jenkins:
-    build: ./jenkins
-    container_name: jenkins
-    ports:
-      - "8080:8080"
-      - "50000:50000"
-    environment:
-      - DOCKER_HOST=npipe:////./pipe/docker_engine
-    volumes:
-      - jenkins_home:/var/jenkins_home
-      - \\.\pipe\docker_engine:\\.\pipe\docker_engine
-    restart: unless-stopped
+web:
+build: .
+ports:
+- "8080:8080"
