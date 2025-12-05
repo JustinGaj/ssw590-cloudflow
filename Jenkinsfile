@@ -1,10 +1,13 @@
 pipeline {
   agent any
-  environment { IMAGE = 'cloudflowstocks/web' }
+  environment {
+    IMAGE = 'cloudflowstocks/web'
+    VERSION_FILE = 'VERSION'
+  }
   stages {
+    stage('Checkout') { steps { checkout scm } }
 
-    // Run npm inside a node container so Jenkins host doesn't need npm installed
-    stage('Install (inside node container)') {
+    stage('Install deps (in node container)') {
       steps {
         sh '''
           echo "Running npm ci inside node:20-slim"
@@ -13,33 +16,37 @@ pipeline {
       }
     }
 
-    stage('Build') {
+    stage('Build image') {
       steps {
         script {
           def changeCount = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
-          def base = readFile('VERSION').trim()
+          def base = readFile(env.VERSION_FILE).trim()
           env.TAG = "${base}.${changeCount}"
           sh "docker build -t ${IMAGE}:${TAG} ."
         }
       }
     }
 
-    stage('Test') {
+    stage('Run smoke test') {
       steps {
-        sh "docker run -d --rm -p 8080:8080 --name cfstest ${IMAGE}:${TAG}"
-        sh 'sleep 2'
-        sh 'node run_test.js'    // this runs on Jenkins host - it accesses localhost:8080
-        sh 'docker stop cfstest || true'
+        sh '''
+          echo "Starting app container for test"
+          docker run -d --rm -p 8080:8080 --name cfstest ${IMAGE}:${TAG}
+          sleep 2
+          echo "Running smoke test inside node container"
+          docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c "node /work/run_test.js"
+          docker stop cfstest || true
+        '''
       }
     }
 
-    stage('LaTeX (inside container)') {
+    stage('Compile LaTeX') {
       steps {
         sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || true'
       }
     }
 
-    stage('Package') {
+    stage('Package artifact') {
       steps {
         sh """
           mkdir -p out
@@ -50,11 +57,22 @@ pipeline {
         archiveArtifacts artifacts: "deploy-${TAG}.zip", fingerprint: true
       }
     }
+
+    stage('Deploy to host (replace container)') {
+      steps {
+        sh """
+          docker tag ${IMAGE}:${TAG} ${IMAGE}:latest || true
+          docker stop cloudflowstocks-site || true
+          docker rm cloudflowstocks-site || true
+          docker run -d --name cloudflowstocks-site -p 80:8080 ${IMAGE}:${TAG}
+        """
+      }
+    }
   }
 
   post {
-    always { echo 'Done' }
+    always { echo "Pipeline finished" }
     success { echo "SUCCESS: ${env.TAG}" }
-    failure { echo 'FAILED' }
+    failure { echo "FAILED" }
   }
 }
