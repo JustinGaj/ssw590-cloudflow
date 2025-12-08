@@ -1,5 +1,11 @@
 pipeline {
-  agent { dockerfile true}
+  agent any
+
+  environment {
+    IMAGE = 'cloudflowstocks/web'
+    VERSION_FILE = 'VERSION'
+  }
+
   stages {
     stage('Checkout') { steps { checkout scm } }
 
