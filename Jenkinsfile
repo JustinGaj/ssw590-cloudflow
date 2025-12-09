@@ -11,17 +11,17 @@ pipeline {
             steps { checkout scm } 
         }
 
-      stage('Install & Test') {
+    stage('Install & Test') {
         steps {
             sh '''
                 echo "Running tests in node container"
                 
-                # 1. Permission fix (already tried, but keep for robustness)
+                # Use chmod for safety (runs on host)
                 chmod -R a+rwx .
                 
-                # 2. THE FIX: Enclose the sh -c command in single quotes!
-                # -u 0 ensures permission, and '...' ensures correct parsing.
-                docker run --rm -u 0 -v "$PWD":/work -w /work node:20-slim sh -c 'npm install && npm test'
+                # FINAL ATTEMPT: Hardcode the absolute workspace path
+                # This bypasses any shell variable ($PWD) or path resolution issues.
+                docker run --rm -u 0 -v /var/jenkins_home/workspace/cloudflow-pipeline:/work -w /work node:20-slim sh -c 'npm install && npm test'
             '''
         }
     }
