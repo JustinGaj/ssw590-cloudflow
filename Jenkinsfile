@@ -26,43 +26,45 @@ pipeline {
         }
     }
 
-        stage('Build & Version Image') {
-            steps {
-                script {
-                    def changelist = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
-                    env.TAG = "${VERSION_BASE}.${changelist}"
-                    echo "Building Version: ${env.TAG}"
-                    sh "docker build -t ${IMAGE}:${env.TAG} ."
-                }
-            }
-        }
-
-        stage('Compile LaTeX') {
-            steps {
-                sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || echo "LaTeX failed but continuing build"'
-            }
-        }
-
-        stage('Package Artifact') {
-            steps {
-                sh """
-                    echo "Version: ${env.TAG}" > VERSION.txt
-                    zip -r deployment-${env.TAG}.zip index.js package.json VERSION.txt
-                """
-                archiveArtifacts artifacts: "*.zip", fingerprint: true
-            }
-        }
-
-        stage('Deploy') {
-            steps {
-                sh """
-                    docker stop site-container || true
-                    docker rm site-container || true
-                    docker run -d --name site-container -p 80:8080 ${IMAGE}:${env.TAG}
-                """
+    stage('Build & Version Image') {
+        steps {
+            script {
+                def changelist = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
+                env.TAG = "${VERSION_BASE}.${changelist}"
+                echo "Building Version: ${env.TAG}"
+                // Build context should be the current directory (.)
+                sh "docker build -t ${IMAGE}:${env.TAG} ." 
             }
         }
     }
+
+    stage('Compile LaTeX') {
+      steps {
+          sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || echo "LaTeX failed but continuing build"'
+      }
+    }
+
+    stage('Package Artifact') {
+      steps {
+          sh """
+              echo "Version: ${env.TAG}" > VERSION.txt
+              # Package files from the root context
+              zip -r deployment-${env.TAG}.zip index.js package.json VERSION.txt latex.pdf
+          """
+          archiveArtifacts artifacts: "*.zip", fingerprint: true
+      }
+    }
+
+    stage('Deploy') {
+      steps {
+          sh """
+              docker stop site-container || true
+              docker rm site-container || true
+              docker run -d --name site-container -p 80:8080 ${IMAGE}:${env.TAG}
+          """
+      }
+    }
+  }
 
     // THIS SECTION SUMMARIZES FOR YOUR DEMO
     post {
