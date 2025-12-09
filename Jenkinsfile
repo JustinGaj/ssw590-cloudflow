@@ -18,8 +18,6 @@ pipeline {
       }
     }
 
----
-
     stage('Test (ephemeral container clone & run)') {
       steps {
         sh '''
@@ -93,8 +91,6 @@ pipeline {
       }
     }
 
----
-
     stage('Build (from git)') {
       steps {
         script {
@@ -106,8 +102,6 @@ pipeline {
         "
       }
     }
-
----
 
     stage('LaTeX (containerized)') {
       steps {
@@ -131,8 +125,6 @@ pipeline {
       }
     }
 
----
-
     stage('Package (host)') {
       steps {
         sh '''
@@ -144,8 +136,6 @@ pipeline {
         archiveArtifacts artifacts: "deployment-${TAG}.zip", fingerprint: true
       }
     }
-
----
 
     stage('Deploy (host)') {
       steps {
@@ -161,7 +151,6 @@ pipeline {
     }
   }
 
----
 
   post {
     success {
