@@ -1,24 +1,24 @@
 pipeline {
-    agent {
+agent {
+        // Main agent: where npm install, git, and shell scripts run
         docker {
             image 'node:20-bullseye'
-            // Use the standard Docker image as a separate service for DinD
-            // The 'docker:dind' image is designed to run its own Docker daemon,
-            // bypassing host incompatibility issues like GLIBC.
-            args '--privileged'
+            args '--privileged' // needed for DinD setup to work
             label 'node-agent'
-            service('docker:dind')
+        }
+        // Separate service for the Docker daemon (DinD)
+        // Note: The service name "docker" is used here because DOCKER_HOST is set to 'tcp://docker:2376'
+        service {
+            image 'docker:dind'
+            args '--privileged' // The DinD service container itself needs to be privileged
         }
     }
 
     environment {
-        IMAGE = 'cloudflowstocks/web' 
-        VERSION_BASE = '1.0' 
-        WORKSPACE_PATH = '/var/jenkins_home/workspace/cloudflow-pipeline' 
-        // CRITICAL: Set the Docker host environment variable to point to the DinD service
+        // ... (Environment variables remain the same) ...
         DOCKER_HOST = 'tcp://docker:2376'
-        DOCKER_CERT_PATH = '/certs/client' // Required for TLS
-        DOCKER_TLS_VERIFY = '1' // Required for TLS
+        DOCKER_CERT_PATH = '/certs/client'
+        DOCKER_TLS_VERIFY = '1'
     }
 
     stages {
