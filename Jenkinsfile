@@ -22,24 +22,42 @@ pipeline {
         sh '''
           set -eux
 
-          echo "PWD: $PWD"
-          echo "Workspace listing:"
+          echo "HOST: PWD = $PWD"
+          echo "HOST workspace listing:"
           ls -la
 
-          # Ensure required files exist in root
-          if [ ! -f "./index.js" ]; then echo "ERROR: index.js not found in repo root"; exit 1; fi
-          if [ ! -f "./run_test.js" ]; then echo "ERROR: run_test.js not found in repo root"; exit 1; fi
-
-          echo "Installing deps and starting app (detached)..."
-          APP_ID=$(docker run -d --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "npm install --no-audit --no-fund && node index.js")
+          echo "Starting app container (detached) - try root then app/ paths"
+          # start app trying both locations; keep detached
+          APP_ID=$(docker run -d --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc '
+            npm install --no-audit --no-fund || true
+            if [ -f "./index.js" ]; then
+              echo "Starting ./index.js"
+              node ./index.js &
+            elif [ -f "./app/index.js" ]; then
+              echo "Starting ./app/index.js"
+              node ./app/index.js &
+            else
+              echo "No index.js found - exiting"
+              exit 2
+            fi
+            sleep 99999
+          ')
           echo "App container id: $APP_ID"
           sleep 4
 
-          echo "Verify container workspace:"
-          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "pwd; ls -la /work"
+          echo "DEBUG: What the test container sees at /work:"
+          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc 'pwd; ls -la /work; echo "If app exists, list it:"; ls -la /work/app || true'
 
-          echo "Run smoke test:"
-          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "node run_test.js"
+          echo "Running smoke test (try root then app/ paths)"
+          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc '
+            if [ -f "./run_test.js" ]; then
+              echo "Running ./run_test.js"; node ./run_test.js; exit $?
+            elif [ -f "./app/run_test.js" ]; then
+              echo "Running ./app/run_test.js"; node ./app/run_test.js; exit $?
+            else
+              echo "run_test.js not found in root or app/"; exit 3
+            fi
+          '
 
           echo "Stopping app container..."
           docker stop $APP_ID || true
