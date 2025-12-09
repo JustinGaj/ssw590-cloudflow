@@ -1,12 +1,6 @@
-node {
-    stage('Checkout') {
-        checkout scm
-        echo "Repo checked out"
-    }
+pipeline {
+  agent any
 
-<<<<<<< HEAD
-    stage('Set Version') {
-=======
   environment {
     IMAGE = 'cloudflowstocks/web'
     VERSION_BASE = '1.0'
@@ -17,131 +11,90 @@ node {
   stages {
     stage('Checkout (host)') {
       steps {
->>>>>>> parent of c545847 (parameter not set error fix)
         script {
-            def versionContent = readFile('version').trim()
-            // example: 1.0.245
-            env.APP_VERSION = versionContent
-            echo "Version set to: ${env.APP_VERSION}"
+          cleanWs()
+          checkout scm
         }
+      }
     }
 
-<<<<<<< HEAD
-    stage('Build LaTeX Document') {
-        echo "Compiling LaTeX..."
-        sh """
-            sudo apt-get update
-            sudo apt-get install -y texlive texlive-latex-extra
-            pdflatex latex.tex
-        """
-        archiveArtifacts artifacts: 'latex.pdf', allowEmptyArchive: true
-    }
-
-    stage('Install Dependencies') {
-        echo "Installing Node dependencies"
-        sh 'npm install'
-    }
-
-    stage('Run Tests') {
-        echo "Running automated tests"
-        sh 'node run_test.js'
-    }
-
-    stage('Build Package') {
-        echo "Packaging deployment artifact"
-
-        sh """
-            mkdir -p build
-            cp -r index.js package.json package-lock.json latex.pdf build/
-            zip -r artifact-${APP_VERSION}.zip build/
-        """
-
-        archiveArtifacts artifacts: "artifact-${APP_VERSION}.zip"
-    }
-
-    stage('Summary') {
-        echo "Build completed successfully"
-        echo "Artifact version: ${env.APP_VERSION}"
-    }
-=======
     stage('Test (ephemeral container clone & run)') {
       steps {
-        sh '''
-          set -eux
-          echo "Running tests inside ephemeral node container (clone, start app, wait, test)..."
-
-          docker run --rm node:20-bullseye bash -lc "
+        script {
+          // Create a dedicated folder for CI scripts
+          writeFile file: 'ci/run_tests.sh', text: '''#!/bin/bash
             set -eux
+            echo "Running tests inside ephemeral node container..."
 
-            # clone repository
-            git clone ${GIT_REPO} /tmp/repo
+            git clone "$GIT_REPO" /tmp/repo
             cd /tmp/repo
 
-            # install deps (prefer ci)
             npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
-            # start app in background
             if [ -f ./index.js ]; then
-              echo 'Starting ./index.js'
               node ./index.js > /tmp/app.log 2>&1 &
             elif [ -f ./app/index.js ]; then
-              echo 'Starting ./app/index.js'
               node ./app/index.js > /tmp/app.log 2>&1 &
             else
-              echo 'No index.js found; cannot start app'
-              cat /tmp/app.log || true
+              echo "No index.js found; cannot start app"
               exit 2
             fi
 
-            # FIX APPLIED HERE — escape \$! correctly
-            APP_PID=\\$!
-            echo 'APP PID:' \\$APP_PID
+            APP_PID=$!
+            echo "APP PID: $APP_PID"
 
-            # wait for server to accept connections on 127.0.0.1:8080
             MAX_WAIT=20
             i=0
-            while [ \\$i -lt \\$MAX_WAIT ]; do
+            while [ $i -lt $MAX_WAIT ]; do
               node -e '
-                const net = require(\"net\");
-                const s = net.createConnection({port:8080, host:\"127.0.0.1\"}, () => { console.log(\"open\"); s.end(); process.exit(0) });
-                s.on(\"error\", () => process.exit(1));
+                const net = require("net");
+                const s = net.createConnection({port:8080, host:"127.0.0.1"}, () => { console.log("open"); s.end(); process.exit(0) });
+                s.on("error", () => process.exit(1));
               ' && break || true
-              i=\\$((i+1))
+              i=$((i+1))
               sleep 1
             done
 
-            if [ \\$i -ge \\$MAX_WAIT ]; then
-              echo \"Server did not start within expected time. Last 200 lines of app log:\"
+            if [ $i -ge $MAX_WAIT ]; then
+              echo "Server did not start in time."
               tail -n 200 /tmp/app.log || true
-              kill \\$APP_PID || true
+              kill $APP_PID || true
               exit 3
             fi
 
-            echo 'Server appears up (after' \\$i 'seconds). Running tests...'
+            echo "Server up; running test..."
+
             if [ -f ./run_test.js ]; then
               node ./run_test.js
             elif [ -f ./app/run_test.js ]; then
               node ./app/run_test.js
             else
-              echo 'run_test.js not found'
-              kill \\$APP_PID || true
+              echo "run_test.js not found"
+              kill $APP_PID || true
               exit 4
             fi
 
-            TEST_EXIT=\\$?
-            echo 'Test exit code:' \\$TEST_EXIT
-            kill \\$APP_PID || true
-            exit \\$TEST_EXIT
-          "
-        '''
+            TEST_EXIT=$?
+            kill $APP_PID || true
+            exit $TEST_EXIT
+          '''
+          sh 'chmod +x ci/run_tests.sh'
+
+          // Mount the folder containing the script into container
+          sh '''
+            docker run --rm \
+              -v $PWD/ci:/ci:ro \
+              node:20-bullseye \
+              bash -lc "/ci/run_tests.sh"
+          '''
+        }
       }
     }
 
     stage('Build (from git)') {
       steps {
         script {
-          def count = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
-          env.TAG = "${VERSION_BASE}.${count}"
+          env.TAG = "${VERSION_BASE}." + sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
         }
         sh '''
           docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c "
@@ -154,18 +107,15 @@ node {
     stage('LaTeX (containerized)') {
       steps {
         sh '''
-          set -eux
-          rm -f /tmp/latex-${BUILD_ID}.pdf || true
           docker run --rm -u 0 -v /tmp:/tmp blang/latex:latest bash -lc "
-            rm -rf /tmp/repo || true
             git clone ${GIT_REPO} /tmp/repo &&
             cd /tmp/repo &&
-            pdflatex latex.tex && cp -f latex.pdf /tmp/latex-${BUILD_ID}.pdf || true
-          "
+            pdflatex latex.tex &&
+            cp latex.pdf /tmp/latex-${BUILD_ID}.pdf
+          " || true
+
           if [ -f /tmp/latex-${BUILD_ID}.pdf ]; then
             mv /tmp/latex-${BUILD_ID}.pdf ./latex.pdf
-          else
-            echo 'No latex.pdf produced; continuing'
           fi
         '''
       }
@@ -174,7 +124,6 @@ node {
     stage('Package (host)') {
       steps {
         sh '''
-          set -eux
           echo "${TAG}" > VERSION.txt
           zip -r deployment-${TAG}.zip index.js package.json VERSION.txt latex.pdf || true
         '''
@@ -185,7 +134,6 @@ node {
     stage('Deploy (host)') {
       steps {
         sh '''
-          set -eux
           docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c "
             docker stop site-container || true;
             docker rm site-container || true;
@@ -211,5 +159,4 @@ node {
       echo "Pipeline finished on ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
     }
   }
->>>>>>> parent of c545847 (parameter not set error fix)
 }
