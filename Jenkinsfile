@@ -1,162 +1,59 @@
-pipeline {
-  agent any
+stage('Test (ephemeral container run)') {
+  steps {
+    script {
 
-  environment {
-    IMAGE = 'cloudflowstocks/web'
-    VERSION_BASE = '1.0'
-    GIT_REPO = 'https://github.com/JustinGaj/ssw590-cloudflow.git'
-    GIT_REF  = 'main'
-  }
+      // Write test runner into workspace
+      writeFile file: 'run_tests.sh', text: '''#!/bin/bash
+        set -eux
+        echo "Running tests inside ephemeral Node container..."
 
-  stages {
-    stage('Checkout (host)') {
-      steps {
-        script {
-          cleanWs()
-          checkout scm
-        }
-      }
-    }
+        cd /workspace
 
-    stage('Test (ephemeral container clone & run)') {
-      steps {
-        script {
-          // Create a dedicated folder for CI scripts
-          writeFile file: 'ci/run_tests.sh', text: '''#!/bin/bash
-            set -eux
-            echo "Running tests inside ephemeral node container..."
+        # Install dependencies
+        npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
-            git clone "$GIT_REPO" /tmp/repo
-            cd /tmp/repo
+        # Start the app
+        echo "Starting index.js..."
+        node index.js > /tmp/app.log 2>&1 &
+        APP_PID=$!
 
-            npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+        # Wait for port 8080
+        MAX_WAIT=20
+        i=0
+        while [ $i -lt $MAX_WAIT ]; do
+          node -e '
+            const net = require("net");
+            const s = net.createConnection({port:8080, host:"127.0.0.1"}, () => { process.exit(0) });
+            s.on("error", () => process.exit(1));
+          ' && break || true
+          i=$((i+1))
+          sleep 1
+        done
 
-            if [ -f ./index.js ]; then
-              node ./index.js > /tmp/app.log 2>&1 &
-            elif [ -f ./app/index.js ]; then
-              node ./app/index.js > /tmp/app.log 2>&1 &
-            else
-              echo "No index.js found; cannot start app"
-              exit 2
-            fi
+        if [ $i -ge $MAX_WAIT ]; then
+          echo "App failed to start"
+          tail -n 200 /tmp/app.log || true
+          kill $APP_PID || true
+          exit 3
+        fi
 
-            APP_PID=$!
-            echo "APP PID: $APP_PID"
+        echo "App is up — running tests..."
+        node run_test.js
+        TEST_EXIT=$?
 
-            MAX_WAIT=20
-            i=0
-            while [ $i -lt $MAX_WAIT ]; do
-              node -e '
-                const net = require("net");
-                const s = net.createConnection({port:8080, host:"127.0.0.1"}, () => { console.log("open"); s.end(); process.exit(0) });
-                s.on("error", () => process.exit(1));
-              ' && break || true
-              i=$((i+1))
-              sleep 1
-            done
+        kill $APP_PID || true
+        exit $TEST_EXIT
+      '''
 
-            if [ $i -ge $MAX_WAIT ]; then
-              echo "Server did not start in time."
-              tail -n 200 /tmp/app.log || true
-              kill $APP_PID || true
-              exit 3
-            fi
+      sh 'chmod +x run_tests.sh'
 
-            echo "Server up; running test..."
-
-            if [ -f ./run_test.js ]; then
-              node ./run_test.js
-            elif [ -f ./app/run_test.js ]; then
-              node ./app/run_test.js
-            else
-              echo "run_test.js not found"
-              kill $APP_PID || true
-              exit 4
-            fi
-
-            TEST_EXIT=$?
-            kill $APP_PID || true
-            exit $TEST_EXIT
-          '''
-          sh 'chmod +x ci/run_tests.sh'
-
-          // Mount the folder containing the script into container
-          sh '''
-            docker run --rm \
-              -v $PWD/ci:/ci:ro \
-              node:20-bullseye \
-              bash -lc "/ci/run_tests.sh"
-          '''
-        }
-      }
-    }
-
-    stage('Build (from git)') {
-      steps {
-        script {
-          env.TAG = "${VERSION_BASE}." + sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
-        }
-        sh '''
-          docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c "
-            docker build -t ${IMAGE}:${TAG} ${GIT_REPO}#${GIT_REF}
-          "
-        '''
-      }
-    }
-
-    stage('LaTeX (containerized)') {
-      steps {
-        sh '''
-          docker run --rm -u 0 -v /tmp:/tmp blang/latex:latest bash -lc "
-            git clone ${GIT_REPO} /tmp/repo &&
-            cd /tmp/repo &&
-            pdflatex latex.tex &&
-            cp latex.pdf /tmp/latex-${BUILD_ID}.pdf
-          " || true
-
-          if [ -f /tmp/latex-${BUILD_ID}.pdf ]; then
-            mv /tmp/latex-${BUILD_ID}.pdf ./latex.pdf
-          fi
-        '''
-      }
-    }
-
-    stage('Package (host)') {
-      steps {
-        sh '''
-          echo "${TAG}" > VERSION.txt
-          zip -r deployment-${TAG}.zip index.js package.json VERSION.txt latex.pdf || true
-        '''
-        archiveArtifacts artifacts: "deployment-${TAG}.zip", fingerprint: true
-      }
-    }
-
-    stage('Deploy (host)') {
-      steps {
-        sh '''
-          docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c "
-            docker stop site-container || true;
-            docker rm site-container || true;
-            docker run -d --name site-container -p 80:8080 ${IMAGE}:${TAG}
-          "
-        '''
-      }
-    }
-  }
-
-  post {
-    success {
-      echo "------------------------------------------------"
-      echo "DEMO SUCCESS: ${IMAGE}:${env.TAG} deployed."
-      echo "------------------------------------------------"
-    }
-    failure {
-      echo "------------------------------------------------"
-      echo "DEMO FAILED: check failing stage logs."
-      echo "------------------------------------------------"
-    }
-    always {
-      echo "Pipeline finished on ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+      // Run inside clean Node container
+      sh '''
+        docker run --rm \
+          -v $PWD:/workspace \
+          node:20-bullseye \
+          bash -lc "/workspace/run_tests.sh"
+      '''
     }
   }
 }
