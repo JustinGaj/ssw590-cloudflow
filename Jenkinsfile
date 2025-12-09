@@ -21,7 +21,7 @@ pipeline {
                 chmod -R a+rwx .
                 
                 # Execute npm commands inside the container using the proper shell quoting.
-                docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c "npm install && npm test"
+                docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c 'npm install && npm test'
             '''
         }
     }
