@@ -10,12 +10,13 @@ pipeline {
     stage('Checkout') { steps { checkout scm } }
 
     stage('Install deps (in node container)') {
-      steps {
-        sh '''
-          echo "Running npm ci inside node:20-slim"
-          docker run --rm -v "$PWD/app":/work -w /work node:20-slim sh -c "npm ci"
-        '''
-      }
+        steps {
+            sh '''
+                echo "Running npm ci inside node:20-slim"
+                # Mount the current directory ($PWD) to /work instead of $PWD/app
+                docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c "npm ci"
+            '''
+        }
     }
 
     stage('Build image') {
