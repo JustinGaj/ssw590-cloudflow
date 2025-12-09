@@ -138,17 +138,11 @@ pipeline {
     }
 
     stage('Deploy (host)') {
-      steps {
-        sh '''
-          set -eux
-          docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c "
-            docker stop site-container || true;
-            docker rm site-container || true;
-            docker run -d --name site-container -p 80:8080 ${IMAGE}:${TAG}
-          "
-        '''
+        steps {
+          // Use a single double-quoted string for clean Groovy interpolation and shell command.
+          sh "docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c 'docker stop site-container || true; docker rm site-container || true; docker run -d --name site-container -p 80:8080 ${IMAGE}:${TAG}'"
+        }
       }
-    }
   }
 
 
