@@ -88,7 +88,6 @@ pipeline {
         }
       }
   }
-}
     // THIS SECTION SUMMARIZES FOR YOUR DEMO
     post {
         success {
@@ -107,4 +106,5 @@ pipeline {
             // sh 'docker image prune -f'
         }
     }
+  }
 }
