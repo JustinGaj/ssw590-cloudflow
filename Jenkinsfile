@@ -7,10 +7,10 @@ pipeline {
   }
 
   stages {
-    stage('Checkout Code') {
+    stage('Checkout') {
       steps {
         script {
-          echo "Cleaning workspace and checking out code..."
+          echo "Clean workspace and checkout"
           cleanWs()
           checkout scm
         }
@@ -19,78 +19,97 @@ pipeline {
 
     stage('Install & Test') {
       steps {
+        // Use a compact, robust shell which auto-detects file locations and runs tests
         sh '''
-          echo "=== Debug: host/PWD ==="
-          echo "Host PWD: $PWD"
-          echo "Host workspace listing (as Jenkins):"
+          echo "=== PWD and workspace listing ==="
+          echo "PWD: $PWD"
           ls -la
 
-          echo "=== Start app in detached container (ensure full command passed into container) ==="
-          # Use bash -lc to ensure the entire command string is interpreted inside the container
-          APP_ID=$(docker run -d --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "npm install && node index.js")
+          # Detect where index.js and run_test.js are
+          if [ -f "$PWD/run_test.js" ]; then
+            TEST_FILE="./run_test.js"
+          elif [ -f "$PWD/app/run_test.js" ]; then
+            TEST_FILE="./app/run_test.js"
+          else
+            echo "ERROR: run_test.js not found in root or app/"
+            exit 1
+          fi
+
+          if [ -f "$PWD/index.js" ]; then
+            START_FILE="./index.js"
+          elif [ -f "$PWD/app/index.js" ]; then
+            START_FILE="./app/index.js"
+          else
+            echo "ERROR: index.js not found in root or app/"
+            exit 1
+          fi
+
+          echo "Detected START_FILE=$START_FILE and TEST_FILE=$TEST_FILE"
+
+          echo "Starting app container (detached) using workspace bind..."
+          # install deps and start the app inside the container; keep it detached
+          APP_ID=$(docker run -d --rm -v "$PWD":/work -w /work node:20-bullseye \
+            bash -lc "npm install --no-audit --no-fund && node $START_FILE")
           echo "App container id: $APP_ID"
-          sleep 3
+          sleep 4
 
-          echo "=== Debug: verify container sees workspace files ==="
-          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "echo 'Inside test container: PWD=' && pwd && echo 'Listing /work:' && ls -la /work"
+          echo "Verify container sees files (inside throwaway container):"
+          docker run --rm -v "$PWD":/work -w /work node:20-bullseye \
+            bash -lc "echo 'Inside test container PWD:' && pwd && echo 'Listing /work:' && ls -la /work"
 
-          echo "=== Run the smoke test (explicit invocation) ==="
-          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "node run_test.js"
+          echo "Running smoke test: node $TEST_FILE"
+          docker run --rm -v "$PWD":/work -w /work node:20-bullseye \
+            bash -lc "node $TEST_FILE"
 
-          echo "=== Stop app container ==="
+          echo "Stopping app container..."
           docker stop $APP_ID || true
         '''
       }
     }
 
-
-    stage('Build & Version Image') {
+    stage('Build & Tag') {
       steps {
         script {
-          def changelist = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
-          env.TAG = "${VERSION_BASE}.${changelist}"
-          echo "Computed image tag: ${env.TAG}"
+          def count = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
+          env.TAG = "${VERSION_BASE}.${count}"
+          echo "Computed tag: ${env.TAG}"
         }
-
-        // use docker image to run docker build on the host via socket; use \$PWD to let shell expand PWD at runtime
-        sh """
+        // Build using docker image to execute docker CLI against host socket
+        sh '''
           docker run --rm -u 0 \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "\$PWD":/work -w /work docker:latest \
-            sh -c 'docker build -t ${IMAGE}:${env.TAG} .'
-        """
+            -v "$PWD":/work -w /work docker:latest \
+            sh -c "docker build -t ${IMAGE}:${TAG} ."
+        '''
       }
     }
 
-    stage('Compile LaTeX') {
+    stage('LaTeX') {
       steps {
-        // compile LaTeX (continue on failure)
-        sh """
-          docker run --rm -u 0 -v "\$PWD":/work -w /work blang/latex:latest \
-            pdflatex latex.tex || echo 'LaTeX failed but continuing'
-        """
+        sh '''
+          docker run --rm -u 0 -v "$PWD":/work -w /work blang/latex:latest \
+            pdflatex latex.tex || echo "LaTeX step failed; continuing"
+        '''
       }
     }
 
-    stage('Package Artifact') {
+    stage('Package') {
       steps {
-        sh """
-          echo "Version: ${env.TAG}" > VERSION.txt
-          # include main app files and generated latex.pdf if present
-          zip -r deployment-${env.TAG}.zip index.js package.json VERSION.txt latex.pdf || true
-        """
-        archiveArtifacts artifacts: "deployment-${env.TAG}.zip", fingerprint: true
+        sh '''
+          echo "${TAG}" > VERSION.txt
+          zip -r deployment-${TAG}.zip index.js package.json VERSION.txt latex.pdf || true
+        '''
+        archiveArtifacts artifacts: "deployment-${TAG}.zip", fingerprint: true
       }
     }
 
     stage('Deploy') {
       steps {
-        echo "Deploying ${IMAGE}:${env.TAG} to host (replacing existing container)"
-        // use docker:latest container to run docker commands on host via socket
-        sh """
+        echo "Deploying ${IMAGE}:${TAG}"
+        sh '''
           docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest \
-            sh -c "docker stop site-container || true; docker rm site-container || true; docker run -d --name site-container -p 80:8080 ${IMAGE}:${env.TAG}"
-        """
+            sh -c "docker stop site-container || true; docker rm site-container || true; docker run -d --name site-container -p 80:8080 ${IMAGE}:${TAG}"
+        '''
       }
     }
   }
