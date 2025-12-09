@@ -1,17 +1,17 @@
 pipeline {
-    // Uses the main Jenkins agent for checkout and setup.
+    // Rely on the standard Jenkins executor (agent any) for flexibility
     agent any 
 
     environment {
         IMAGE = 'cloudflowstocks/web' 
         VERSION_BASE = '1.0' 
-        // CRITICAL: Define the absolute path to ensure correct volume mounting.
+        // CRITICAL: Define the absolute path. This guarantees correct volume mounting (Fixes ENOENT).
         WORKSPACE_PATH = '/var/jenkins_home/workspace/cloudflow-pipeline' 
-        // We REMOVE DOCKER_HOST variables to force use of the host's /var/run/docker.sock
+        // DOCKER_HOST variables are intentionally removed to force use of the host's /var/run/docker.sock
     }
     
     stages {
-        // Stage 1: Checkout Code (Uses the main Jenkins agent)
+        // Stage 1: Checkout Code
         stage('Checkout Code') {
             steps {
                 script {
@@ -22,26 +22,27 @@ pipeline {
             }
         }
 
-        // Stage 2: Install & Test (Run inside a Node container for isolation)
+        // Stage 2: Install & Test 🧪
         stage('Install & Test') {
             steps {
-                // FIX: Use the resolved ${WORKSPACE_PATH} variable instead of $PWD to avoid ENOENT.
+                // CRITICAL FIX: Escaping the inner shell command quotes and variables (\", \\$!) 
+                // to prevent Groovy from corrupting the multi-line sh -c string.
                 sh """
                     echo "Running tests in node container."
                     
-                    docker run --rm -v ${WORKSPACE_PATH}:/work -w /work node:20-bullseye sh -c "
+                    docker run --rm -v ${WORKSPACE_PATH}:/work -w /work node:20-bullseye sh -c \\"
                         npm install && 
                         npm start & 
-                        APP_PID=\$!
+                        APP_PID=\\\$!
                         sleep 3 && 
                         npm test && 
-                        kill \$APP_PID
-                    "
+                        kill \\\$APP_PID
+                    \\"
                 """
             }
         }
 
-        // Stage 3: Build & Version Image (Uses the Docker-in-Docker compatible wrapper)
+        // Stage 3: Build & Version Image 🏗️
         stage('Build & Version Image') {
             steps {
                 script {
@@ -49,13 +50,13 @@ pipeline {
                     env.TAG = "${VERSION_BASE}.${changelist}"
                     echo "Building Version: ${env.TAG}"
                     
-                    // CRITICAL: Wrapper command to bypass GLIBC issues and run 'docker build'
+                    // CRITICAL FIX: Wrapper command to bypass GLIBC issues and run 'docker build'
                     sh "docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock -v ${WORKSPACE_PATH}:/work -w /work docker:latest docker build -t ${IMAGE}:${env.TAG} ."
                 }
             }
         }
 
-        // Stage 4: Compile LaTeX documentation (Run inside a LaTeX container)
+        // Stage 4: Compile LaTeX documentation
         stage('Compile LaTeX') {
             steps {
                 // Run LaTeX compilation inside a container, mounting the absolute workspace
@@ -74,7 +75,7 @@ pipeline {
             }
         }
 
-        // Stage 6: Deploy (Uses the Docker-in-Docker compatible wrapper)
+        // Stage 6: Deploy 🚢
         stage('Deploy') {
             steps {
                 echo "Deploying container ${IMAGE}:${env.TAG}"
