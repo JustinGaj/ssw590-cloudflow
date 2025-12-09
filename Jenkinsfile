@@ -11,59 +11,59 @@ pipeline {
             steps { checkout scm } 
         }
 
-    stage('Install & Test') {
+      stage('Install & Test') {
+          steps {
+              sh '''
+                  echo "Running tests in node container"
+                  
+                  # Use 'chmod' for good measure (runs on host)
+                  chmod -R a+rwx .
+                  
+                  # FINAL FIX: Use -u 0 (root user) to bypass all permission errors 
+                  # and use single quotes for correct parsing.
+                  docker run --rm -u 0 -v "$PWD":/work -w /work node:20-slim sh -c 'npm install && npm test'
+              '''
+          }
+      }
+
+      stage('Build & Version Image') {
+          steps {
+              script {
+                  def changelist = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
+                  env.TAG = "${VERSION_BASE}.${changelist}"
+                  echo "Building Version: ${env.TAG}"
+                  // Build context should be the current directory (.)
+                  sh "docker build -t ${IMAGE}:${env.TAG} ." 
+              }
+          }
+      }
+
+      stage('Compile LaTeX') {
         steps {
-            sh '''
-                echo "Running tests in node container"
-                
-                # Use 'chmod' to ensure the container can read the files.
-                # We must run this step on the Jenkins host first.
-                chmod -R a+rwx .
-                
-                # Execute npm commands inside the container using the proper shell quoting.
-                docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c 'npm install && npm test'
-            '''
+            sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || echo "LaTeX failed but continuing build"'
         }
-    }
+      }
 
-    stage('Build & Version Image') {
+      stage('Package Artifact') {
         steps {
-            script {
-                def changelist = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
-                env.TAG = "${VERSION_BASE}.${changelist}"
-                echo "Building Version: ${env.TAG}"
-                // Build context should be the current directory (.)
-                sh "docker build -t ${IMAGE}:${env.TAG} ." 
-            }
+            sh """
+                echo "Version: ${env.TAG}" > VERSION.txt
+                # Package files from the root context
+                zip -r deployment-${env.TAG}.zip index.js package.json VERSION.txt latex.pdf
+            """
+            archiveArtifacts artifacts: "*.zip", fingerprint: true
         }
-    }
-
-    stage('Compile LaTeX') {
-      steps {
-          sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || echo "LaTeX failed but continuing build"'
       }
-    }
 
-    stage('Package Artifact') {
-      steps {
-          sh """
-              echo "Version: ${env.TAG}" > VERSION.txt
-              # Package files from the root context
-              zip -r deployment-${env.TAG}.zip index.js package.json VERSION.txt latex.pdf
-          """
-          archiveArtifacts artifacts: "*.zip", fingerprint: true
+      stage('Deploy') {
+        steps {
+            sh """
+                docker stop site-container || true
+                docker rm site-container || true
+                docker run -d --name site-container -p 80:8080 ${IMAGE}:${env.TAG}
+            """
+        }
       }
-    }
-
-    stage('Deploy') {
-      steps {
-          sh """
-              docker stop site-container || true
-              docker rm site-container || true
-              docker run -d --name site-container -p 80:8080 ${IMAGE}:${env.TAG}
-          """
-      }
-    }
   }
 
     // THIS SECTION SUMMARIZES FOR YOUR DEMO
