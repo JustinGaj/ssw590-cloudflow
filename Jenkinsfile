@@ -5,9 +5,8 @@ pipeline {
     environment {
         IMAGE = 'cloudflowstocks/web' 
         VERSION_BASE = '1.0' 
-        // CRITICAL: Define the absolute path. This guarantees correct volume mounting (Fixes ENOENT).
+        // CRITICAL: Define the absolute path. This guarantees correct volume mounting.
         WORKSPACE_PATH = '/var/jenkins_home/workspace/cloudflow-pipeline' 
-        // DOCKER_HOST variables are intentionally removed to force use of the host's /var/run/docker.sock
     }
     
     stages {
@@ -25,19 +24,18 @@ pipeline {
         // Stage 2: Install & Test 🧪
         stage('Install & Test') {
             steps {
-                // CRITICAL FIX: Escaping the inner shell command quotes and variables (\", \\$!) 
-                // to prevent Groovy from corrupting the multi-line sh -c string.
                 sh """
                     echo "Running tests in node container."
                     
-                    docker run --rm -v ${WORKSPACE_PATH}:/work -w /work node:20-bullseye sh -c \\"
+                    # FINAL FIX: Use single quotes for the inner sh -c command.
+                    docker run --rm -v ${WORKSPACE_PATH}:/work -w /work node:20-bullseye sh -c '
                         npm install && 
                         npm start & 
-                        APP_PID=\\\$!
+                        APP_PID=\$!
                         sleep 3 && 
                         npm test && 
-                        kill \\\$APP_PID
-                    \\"
+                        kill \$APP_PID
+                    '
                 """
             }
         }
@@ -50,7 +48,7 @@ pipeline {
                     env.TAG = "${VERSION_BASE}.${changelist}"
                     echo "Building Version: ${env.TAG}"
                     
-                    // CRITICAL FIX: Wrapper command to bypass GLIBC issues and run 'docker build'
+                    // Wrapper command to bypass GLIBC issues and run 'docker build'
                     sh "docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock -v ${WORKSPACE_PATH}:/work -w /work docker:latest docker build -t ${IMAGE}:${env.TAG} ."
                 }
             }
