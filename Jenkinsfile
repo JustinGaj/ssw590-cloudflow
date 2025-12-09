@@ -4,95 +4,79 @@ pipeline {
   environment {
     IMAGE = 'cloudflowstocks/web'
     VERSION_BASE = '1.0'
+    GIT_REPO = 'https://github.com/JustinGaj/ssw590-cloudflow.git'
+    GIT_REF  = 'main'
   }
 
   stages {
-    stage('Checkout') {
+    stage('Checkout (host)') {
       steps {
         script {
-          echo "Clean workspace and checkout"
+          // Keep a local checkout for packaging / provenance (host workspace)
           cleanWs()
           checkout scm
         }
       }
     }
 
-    stage('Install & Test') {
+    stage('Test (ephemeral container clone)') {
       steps {
+        // clone & test inside ephemeral node container so tests don't depend on workspace mounts
         sh '''
           set -eux
-
-          echo "HOST: PWD = $PWD"
-          echo "HOST workspace listing:"
-          ls -la
-
-          echo "Starting app container (detached) - try root then app/ paths"
-          # start app trying both locations; keep detached
-          APP_ID=$(docker run -d --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc '
-            npm install --no-audit --no-fund || true
-            if [ -f "./index.js" ]; then
-              echo "Starting ./index.js"
-              node ./index.js &
-            elif [ -f "./app/index.js" ]; then
-              echo "Starting ./app/index.js"
-              node ./app/index.js &
-            else
-              echo "No index.js found - exiting"
-              exit 2
-            fi
-            sleep 99999
-          ')
-          echo "App container id: $APP_ID"
-          sleep 4
-
-          echo "DEBUG: What the test container sees at /work:"
-          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc 'pwd; ls -la /work; echo "If app exists, list it:"; ls -la /work/app || true'
-
-          echo "Running smoke test (try root then app/ paths)"
-          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc '
-            if [ -f "./run_test.js" ]; then
-              echo "Running ./run_test.js"; node ./run_test.js; exit $?
-            elif [ -f "./app/run_test.js" ]; then
-              echo "Running ./app/run_test.js"; node ./app/run_test.js; exit $?
-            else
-              echo "run_test.js not found in root or app/"; exit 3
-            fi
-          '
-
-          echo "Stopping app container..."
-          docker stop $APP_ID || true
+          echo "Running tests inside ephemeral node container (cloning repo)..."
+          docker run --rm node:20-bullseye bash -lc "
+            git clone ${GIT_REPO} /tmp/repo &&
+            cd /tmp/repo &&
+            npm ci --no-audit --no-fund || npm install --no-audit --no-fund &&
+            node run_test.js
+          "
         '''
       }
     }
 
-    stage('Build & Tag') {
+    stage('Build (from git)') {
       steps {
         script {
           def count = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
           env.TAG = "${VERSION_BASE}.${count}"
           echo "Computed tag: ${env.TAG}"
         }
+        // Build directly from the Git repo (avoids build-context mounts)
         sh '''
-          docker run --rm -u 0 \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "$PWD":/work -w /work docker:latest \
-            sh -c "docker build -t ${IMAGE}:${TAG} ."
+          docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c "
+            docker build -t ${IMAGE}:${TAG} ${GIT_REPO}#${GIT_REF}
+          "
         '''
       }
     }
 
-    stage('LaTeX') {
+    stage('LaTeX (containerized)') {
       steps {
         sh '''
-          docker run --rm -u 0 -v "$PWD":/work -w /work blang/latex:latest \
-            pdflatex latex.tex || echo "LaTeX failed; continuing"
+          set -eux
+          echo "Compiling LaTeX in container (clone -> compile -> drop to host /tmp)..."
+          rm -f /tmp/latex-${BUILD_ID}.pdf || true
+          docker run --rm -u 0 -v /tmp:/tmp blang/latex:latest bash -lc "
+            rm -rf /tmp/repo || true
+            git clone ${GIT_REPO} /tmp/repo &&
+            cd /tmp/repo &&
+            pdflatex latex.tex && cp -f latex.pdf /tmp/latex-${BUILD_ID}.pdf || true
+          "
+          if [ -f /tmp/latex-${BUILD_ID}.pdf ]; then
+            mv /tmp/latex-${BUILD_ID}.pdf ./latex.pdf
+          else
+            echo 'No latex.pdf produced; continuing'
+          fi
         '''
       }
     }
 
-    stage('Package') {
+    stage('Package (host)') {
       steps {
         sh '''
+          set -eux
+          echo "Packaging deployment artifact from host workspace"
           echo "${TAG}" > VERSION.txt
           zip -r deployment-${TAG}.zip index.js package.json VERSION.txt latex.pdf || true
         '''
@@ -100,12 +84,16 @@ pipeline {
       }
     }
 
-    stage('Deploy') {
+    stage('Deploy (host)') {
       steps {
-        echo "Deploying ${IMAGE}:${TAG}"
         sh '''
-          docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest \
-            sh -c "docker stop site-container || true; docker rm site-container || true; docker run -d --name site-container -p 80:8080 ${IMAGE}:${TAG}"
+          set -eux
+          echo "Deploying ${IMAGE}:${TAG} on host Docker (replace container)"
+          docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c "
+            docker stop site-container || true;
+            docker rm site-container || true;
+            docker run -d --name site-container -p 80:8080 ${IMAGE}:${TAG}
+          "
         '''
       }
     }
@@ -114,12 +102,12 @@ pipeline {
   post {
     success {
       echo "------------------------------------------------"
-      echo "DEMO SUCCESS: Version ${env.TAG} is live! 🎉"
+      echo "DEMO SUCCESS: ${IMAGE}:${env.TAG} deployed."
       echo "------------------------------------------------"
     }
     failure {
       echo "------------------------------------------------"
-      echo "DEMO FAILED: Check logs for the latest stage failure. 🛑"
+      echo "DEMO FAILED: check failing stage logs."
       echo "------------------------------------------------"
     }
     always {
