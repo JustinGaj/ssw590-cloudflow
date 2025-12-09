@@ -19,47 +19,27 @@ pipeline {
 
     stage('Install & Test') {
       steps {
-        // Use a compact, robust shell which auto-detects file locations and runs tests
         sh '''
-          echo "=== PWD and workspace listing ==="
+          set -eux
+
           echo "PWD: $PWD"
+          echo "Workspace listing:"
           ls -la
 
-          # Detect where index.js and run_test.js are
-          if [ -f "$PWD/run_test.js" ]; then
-            TEST_FILE="./run_test.js"
-          elif [ -f "$PWD/app/run_test.js" ]; then
-            TEST_FILE="./app/run_test.js"
-          else
-            echo "ERROR: run_test.js not found in root or app/"
-            exit 1
-          fi
+          # Ensure required files exist in root
+          if [ ! -f "./index.js" ]; then echo "ERROR: index.js not found in repo root"; exit 1; fi
+          if [ ! -f "./run_test.js" ]; then echo "ERROR: run_test.js not found in repo root"; exit 1; fi
 
-          if [ -f "$PWD/index.js" ]; then
-            START_FILE="./index.js"
-          elif [ -f "$PWD/app/index.js" ]; then
-            START_FILE="./app/index.js"
-          else
-            echo "ERROR: index.js not found in root or app/"
-            exit 1
-          fi
-
-          echo "Detected START_FILE=$START_FILE and TEST_FILE=$TEST_FILE"
-
-          echo "Starting app container (detached) using workspace bind..."
-          # install deps and start the app inside the container; keep it detached
-          APP_ID=$(docker run -d --rm -v "$PWD":/work -w /work node:20-bullseye \
-            bash -lc "npm install --no-audit --no-fund && node $START_FILE")
+          echo "Installing deps and starting app (detached)..."
+          APP_ID=$(docker run -d --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "npm install --no-audit --no-fund && node index.js")
           echo "App container id: $APP_ID"
           sleep 4
 
-          echo "Verify container sees files (inside throwaway container):"
-          docker run --rm -v "$PWD":/work -w /work node:20-bullseye \
-            bash -lc "echo 'Inside test container PWD:' && pwd && echo 'Listing /work:' && ls -la /work"
+          echo "Verify container workspace:"
+          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "pwd; ls -la /work"
 
-          echo "Running smoke test: node $TEST_FILE"
-          docker run --rm -v "$PWD":/work -w /work node:20-bullseye \
-            bash -lc "node $TEST_FILE"
+          echo "Run smoke test:"
+          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "node run_test.js"
 
           echo "Stopping app container..."
           docker stop $APP_ID || true
@@ -74,7 +54,6 @@ pipeline {
           env.TAG = "${VERSION_BASE}.${count}"
           echo "Computed tag: ${env.TAG}"
         }
-        // Build using docker image to execute docker CLI against host socket
         sh '''
           docker run --rm -u 0 \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -88,7 +67,7 @@ pipeline {
       steps {
         sh '''
           docker run --rm -u 0 -v "$PWD":/work -w /work blang/latex:latest \
-            pdflatex latex.tex || echo "LaTeX step failed; continuing"
+            pdflatex latex.tex || echo "LaTeX failed; continuing"
         '''
       }
     }
