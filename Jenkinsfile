@@ -19,25 +19,30 @@ pipeline {
 
     stage('Install & Test') {
       steps {
-        // run inside the job workspace; $PWD will be the workspace on the agent
         sh '''
-          echo "PWD: $PWD"
-          echo "Workspace contents:"
+          echo "=== Debug: host/PWD ==="
+          echo "Host PWD: $PWD"
+          echo "Host workspace listing (as Jenkins):"
           ls -la
 
-          echo "Starting app container (detached) using workspace bind..."
-          APP_ID=$(docker run -d --rm -v "$PWD":/work -w /work node:20-bullseye sh -c "npm install && node index.js")
+          echo "=== Start app in detached container (ensure full command passed into container) ==="
+          # Use bash -lc to ensure the entire command string is interpreted inside the container
+          APP_ID=$(docker run -d --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "npm install && node index.js")
           echo "App container id: $APP_ID"
           sleep 3
 
-          echo "Running smoke test in a fresh node container (mounting same workspace)..."
-          docker run --rm -v "$PWD":/work -w /work node:20-bullseye node run_test.js
+          echo "=== Debug: verify container sees workspace files ==="
+          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "echo 'Inside test container: PWD=' && pwd && echo 'Listing /work:' && ls -la /work"
 
-          echo "Stopping app container..."
+          echo "=== Run the smoke test (explicit invocation) ==="
+          docker run --rm -v "$PWD":/work -w /work node:20-bullseye bash -lc "node run_test.js"
+
+          echo "=== Stop app container ==="
           docker stop $APP_ID || true
         '''
       }
     }
+
 
     stage('Build & Version Image') {
       steps {
