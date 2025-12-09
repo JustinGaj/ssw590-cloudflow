@@ -1,17 +1,14 @@
 pipeline {
-agent {
-        // Main agent: where npm install, git, and shell scripts run
-        docker {
-            image 'node:20-bullseye'
-            args '--privileged' // needed for DinD setup to work
-            label 'node-agent'
-        }
-        // Separate service for the Docker daemon (DinD)
-        // Note: The service name "docker" is used here because DOCKER_HOST is set to 'tcp://docker:2376'
-        service {
-            image 'docker:dind'
-            args '--privileged' // The DinD service container itself needs to be privileged
-        }
+    agent {
+      docker {
+          image 'node:20-bullseye'
+          args '--privileged' 
+          label 'node-agent'
+          // CORRECT LOCATION: Use the 'services' directive inside the 'docker' block.
+          services {
+              'docker:dind' // The service container image name
+          }
+      }
     }
 
     environment {
