@@ -1,81 +1,63 @@
 pipeline {
-  agent any
+    agent any
 
-  environment {
-    IMAGE = 'cloudflowstocks/web'
-    VERSION_FILE = 'VERSION'
-  }
+    environment {
+        IMAGE = 'cloudflowstocks/web'
+        VERSION_BASE = '1.0' // Major.Minor
+    }
 
-  stages {
-    stage('Checkout') { steps { checkout scm } }
+    stages {
+        stage('Checkout') { 
+            steps { checkout scm } 
+        }
 
-    stage('Install deps (in node container)') {
-        steps {
-            sh '''
-                echo "Running npm ci inside node:20-slim"
-                # Mount the current directory ($PWD) to /work instead of $PWD/app
-                docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c "npm ci"
-            '''
+        stage('Install & Test') {
+            steps {
+                echo "Running tests in node container"
+                // Mounting $PWD to /work ensures package-lock.json is found in the root
+                sh 'docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c "npm install && npm test"'
+            }
+        }
+
+        stage('Build & Version Image') {
+            steps {
+                script {
+                    // Requirement #6: major.minor.changelist
+                    def changelist = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
+                    env.TAG = "${VERSION_BASE}.${changelist}"
+                    echo "Building Version: ${env.TAG}"
+                    sh "docker build -t ${IMAGE}:${env.TAG} ."
+                }
+            }
+        }
+
+        stage('Compile LaTeX') {
+            steps {
+                // Requirement #4: Visibly compiling LaTeX
+                sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || echo "LaTeX failed but continuing build"'
+            }
+        }
+
+        stage('Package Artifact') {
+            steps {
+                // Requirement #4 & #6: Packaging versioned artifact
+                sh """
+                    echo "Version: ${env.TAG}" > VERSION.txt
+                    zip -r deployment-${env.TAG}.zip index.js package.json VERSION.txt latex.pdf
+                """
+                archiveArtifacts artifacts: "*.zip", fingerprint: true
+            }
+        }
+
+        stage('Deploy to Droplet') {
+            steps {
+                // Deployment visibility
+                sh """
+                    docker stop site-container || true
+                    docker rm site-container || true
+                    docker run -d --name site-container -p 80:8080 ${IMAGE}:${env.TAG}
+                """
+            }
         }
     }
-
-    stage('Build image') {
-      steps {
-        script {
-          def changeCount = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
-          def base = readFile(env.VERSION_FILE).trim()
-          env.TAG = "${base}.${changeCount}"
-          sh "docker build -t ${IMAGE}:${TAG} ."
-        }
-      }
-    }
-
-    stage('Run smoke test') {
-      steps {
-        sh '''
-          echo "Starting app container for test"
-          docker run -d --rm -p 8080:8080 --name cfstest ${IMAGE}:${TAG}
-          sleep 2
-          echo "Running smoke test inside node container"
-          docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c "node /work/run_test.js"
-          docker stop cfstest || true
-        '''
-      }
-    }
-
-    stage('Compile LaTeX') {
-      steps {
-        sh 'docker run --rm -v "$PWD":/work -w /work blang/latex:latest pdflatex latex.tex || true'
-      }
-    }
-
-    stage('Package artifact') {
-      steps {
-        sh """
-          mkdir -p out
-          cp -r app out
-          echo Version:${TAG} > out/VERSION.txt
-          zip -r deploy-${TAG}.zip out
-        """
-        archiveArtifacts artifacts: "deploy-${TAG}.zip", fingerprint: true
-      }
-    }
-
-    stage('Deploy to host (replace container)') {
-      steps {
-        sh """
-          docker tag ${IMAGE}:${TAG} ${IMAGE}:latest || true
-          docker stop cloudflowstocks-site || true
-          docker rm cloudflowstocks-site || true
-          docker run -d --name cloudflowstocks-site -p 80:8080 ${IMAGE}:${TAG}
-        """
-      }
-    }
-  }
-
-  post {
-    always { echo "Pipeline finished" }
-    success { echo "SUCCESS: ${env.TAG}" }
-    failure { echo "FAILED" }
-  }
 }

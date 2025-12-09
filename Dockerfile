@@ -1,7 +1,8 @@
 FROM node:20-slim
-WORKDIR /usr/src/app
-COPY app/package.json ./
-RUN npm ci --only=production
-COPY app/ ./
+WORKDIR /app
+# Copy from root
+COPY package*.json ./ 
+RUN npm install --production
+COPY index.js .
 EXPOSE 8080
-CMD ["node","index.js"]
+CMD ["node", "index.js"]
