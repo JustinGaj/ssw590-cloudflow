@@ -12,19 +12,19 @@ pipeline {
         }
 
       stage('Install & Test') {
-          steps {
-              sh '''
-                  echo "Running tests in node container"
-                  
-                  # Use 'chmod' for good measure (runs on host)
-                  chmod -R a+rwx .
-                  
-                  # FINAL FIX: Use -u 0 (root user) to bypass all permission errors 
-                  # and use single quotes for correct parsing.
-                  docker run --rm -u 0 -v "$PWD":/work -w /work node:20-slim sh -c 'npm install && npm test'
-              '''
-          }
-      }
+        steps {
+            sh '''
+                echo "Running tests in node container"
+                
+                # 1. Permission fix (already tried, but keep for robustness)
+                chmod -R a+rwx .
+                
+                # 2. THE FIX: Enclose the sh -c command in single quotes!
+                # -u 0 ensures permission, and '...' ensures correct parsing.
+                docker run --rm -u 0 -v "$PWD":/work -w /work node:20-slim sh -c 'npm install && npm test'
+            '''
+        }
+    }
 
       stage('Build & Version Image') {
           steps {
