@@ -9,7 +9,6 @@ pipeline {
   }
 
   stages {
-
     stage('Checkout (host)') {
       steps {
         script {
@@ -22,52 +21,48 @@ pipeline {
     stage('Test (ephemeral container clone & run)') {
       steps {
         script {
-          writeFile file: 'run_tests.sh', text: '''
-            #!/bin/bash
+          // Create a dedicated folder for CI scripts
+          writeFile file: 'ci/run_tests.sh', text: '''#!/bin/bash
             set -eux
-
             echo "Running tests inside ephemeral node container..."
 
-            # clone repository
             git clone "$GIT_REPO" /tmp/repo
             cd /tmp/repo
 
             npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
-            # Start app
             if [ -f ./index.js ]; then
               node ./index.js > /tmp/app.log 2>&1 &
             elif [ -f ./app/index.js ]; then
               node ./app/index.js > /tmp/app.log 2>&1 &
             else
-              echo "No index.js found"
+              echo "No index.js found; cannot start app"
               exit 2
             fi
 
             APP_PID=$!
             echo "APP PID: $APP_PID"
 
-            # Wait for server on port 8080
             MAX_WAIT=20
             i=0
             while [ $i -lt $MAX_WAIT ]; do
               node -e '
                 const net = require("net");
-                const s = net.createConnection({port:8080}, () => { console.log("open"); s.end(); process.exit(0) });
+                const s = net.createConnection({port:8080, host:"127.0.0.1"}, () => { console.log("open"); s.end(); process.exit(0) });
                 s.on("error", () => process.exit(1));
-              ' && break
+              ' && break || true
               i=$((i+1))
               sleep 1
             done
 
-            if [ $i -eq $MAX_WAIT ]; then
-              echo "Server never started"
+            if [ $i -ge $MAX_WAIT ]; then
+              echo "Server did not start in time."
               tail -n 200 /tmp/app.log || true
               kill $APP_PID || true
               exit 3
             fi
 
-            echo "Server up in $i seconds"
+            echo "Server up; running test..."
 
             if [ -f ./run_test.js ]; then
               node ./run_test.js
@@ -83,14 +78,14 @@ pipeline {
             kill $APP_PID || true
             exit $TEST_EXIT
           '''
+          sh 'chmod +x ci/run_tests.sh'
 
-          sh 'chmod +x run_tests.sh'
-
+          // Mount the folder containing the script into container
           sh '''
             docker run --rm \
-              -v $PWD/run_tests.sh:/run_tests.sh \
+              -v $PWD/ci:/ci:ro \
               node:20-bullseye \
-              bash -lc "/run_tests.sh"
+              bash -lc "/ci/run_tests.sh"
           '''
         }
       }
@@ -151,10 +146,17 @@ pipeline {
 
   post {
     success {
-      echo "SUCCESS"
+      echo "------------------------------------------------"
+      echo "DEMO SUCCESS: ${IMAGE}:${env.TAG} deployed."
+      echo "------------------------------------------------"
     }
     failure {
-      echo "FAILED"
+      echo "------------------------------------------------"
+      echo "DEMO FAILED: check failing stage logs."
+      echo "------------------------------------------------"
+    }
+    always {
+      echo "Pipeline finished on ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
     }
   }
 }
