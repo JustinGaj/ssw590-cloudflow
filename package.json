@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "scripts": {
     "start": "node index.js",
-    "test": "node ../run_test.js"
+    "test": "node run_test.js"  
   },
-  "dependencies": { "express": "^4.18.2" }
+  "dependencies": {
+    "express": "^4.18.2"
+  }
 }
