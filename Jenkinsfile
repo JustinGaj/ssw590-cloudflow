@@ -31,10 +31,32 @@ pipeline {
         // Stage 2: Install dependencies and run automated tests
         stage('Install & Test') {
             steps {
-                echo "Running npm install and tests inside the Node container."
-                // Since we are *inside* the container, we run npm directly!
-                sh 'npm install'
-                sh 'npm test' 
+                sh '''
+                    echo "Running npm install and tests inside the Node container."
+                    
+                    # 1. Install dependencies
+                    npm install
+                
+                    # 2. Start the application in the background and capture its PID
+                    echo "Starting app in background (PID captured)..."
+                    npm start &
+                    APP_PID=$!
+                    
+                    # 3. Wait 3 seconds for the server to spin up and bind to port 8080 (Crucial!)
+                    sleep 3
+                    
+                    # 4. Run the tests (will now connect to the background process)
+                    echo "Running automated tests..."
+                    npm test
+                    TEST_STATUS=$?
+                    
+                    # 5. Kill the background app process to clean up
+                    echo "Stopping background app (PID: $APP_PID)..."
+                    kill $APP_PID
+                    
+                    # 6. Exit with the test status to determine stage success/failure
+                    exit $TEST_STATUS
+                '''
             }
         }
 
