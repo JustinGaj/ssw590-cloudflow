@@ -18,6 +18,8 @@ pipeline {
       }
     }
 
+//---
+
     stage('Test (ephemeral container clone & run)') {
       steps {
         sh '''
@@ -91,17 +93,20 @@ pipeline {
       }
     }
 
+//---
+
     stage('Build (from git)') {
       steps {
         script {
           def count = sh(script: "git rev-list --count HEAD", returnStdout: true).trim()
           env.TAG = "${VERSION_BASE}.${count}"
         }
-        docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c "
-          docker build -t ${IMAGE}:${TAG} ${GIT_REPO}#${GIT_REF}
-        "
+        // CLEANED SH COMMAND: Single-line double quotes with internal single quotes
+        sh "docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c 'docker build -t ${IMAGE}:${TAG} ${GIT_REPO}#${GIT_REF}'"
       }
     }
+
+//---
 
     stage('LaTeX (containerized)') {
       steps {
@@ -125,6 +130,8 @@ pipeline {
       }
     }
 
+//---
+
     stage('Package (host)') {
       steps {
         sh '''
@@ -137,14 +144,18 @@ pipeline {
       }
     }
 
+//---
+
     stage('Deploy (host)') {
-        steps {
-          // Use a single double-quoted string for clean Groovy interpolation and shell command.
-          sh "docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c 'docker stop site-container || true; docker rm site-container || true; docker run -d --name site-container -p 80:8080 ${IMAGE}:${TAG}'"
-        }
+      steps {
+        // FIX FOR LINE 100: Single-line double quotes with internal single quotes.
+        // This guarantees the colon in /var/run/docker.sock is treated as a literal character within the string.
+        sh "docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c 'docker stop site-container || true; docker rm site-container || true; docker run -d --name site-container -p 80:8080 ${IMAGE}:${TAG}'"
       }
+    }
   }
 
+//---
 
   post {
     success {
