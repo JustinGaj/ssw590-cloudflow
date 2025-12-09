@@ -34,7 +34,7 @@ pipeline {
             # install deps (prefer ci)
             npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
-            # start app in background (try root then app/)
+            # start app in background
             if [ -f ./index.js ]; then
               echo 'Starting ./index.js'
               node ./index.js > /tmp/app.log 2>&1 &
@@ -47,46 +47,45 @@ pipeline {
               exit 2
             fi
 
-            APP_PID=$!
-            echo 'APP PID:' $APP_PID
+            # FIX APPLIED HERE — escape \$! correctly
+            APP_PID=\\$!
+            echo 'APP PID:' \\$APP_PID
 
-            # wait for server to accept connections on 127.0.0.1:8080 with retries
+            # wait for server to accept connections on 127.0.0.1:8080
             MAX_WAIT=20
             i=0
-            while [ \$i -lt \$MAX_WAIT ]; do
-              # try to connect using node (no extra tools required)
+            while [ \\$i -lt \\$MAX_WAIT ]; do
               node -e '
                 const net = require(\"net\");
                 const s = net.createConnection({port:8080, host:\"127.0.0.1\"}, () => { console.log(\"open\"); s.end(); process.exit(0) });
                 s.on(\"error\", () => process.exit(1));
               ' && break || true
-              i=\$((i+1))
+              i=\\$((i+1))
               sleep 1
             done
 
-            if [ \$i -ge \$MAX_WAIT ]; then
+            if [ \\$i -ge \\$MAX_WAIT ]; then
               echo \"Server did not start within expected time. Last 200 lines of app log:\"
               tail -n 200 /tmp/app.log || true
-              kill \$APP_PID || true
+              kill \\$APP_PID || true
               exit 3
             fi
 
-            echo 'Server appears up (after' \$i 'seconds). Running tests...'
-            # run test (root vs app/)
+            echo 'Server appears up (after' \\$i 'seconds). Running tests...'
             if [ -f ./run_test.js ]; then
               node ./run_test.js
             elif [ -f ./app/run_test.js ]; then
               node ./app/run_test.js
             else
               echo 'run_test.js not found'
-              kill \$APP_PID || true
+              kill \\$APP_PID || true
               exit 4
             fi
 
-            TEST_EXIT=\$?
-            echo 'Test exit code:' \$TEST_EXIT
-            kill \$APP_PID || true
-            exit \$TEST_EXIT
+            TEST_EXIT=\\$?
+            echo 'Test exit code:' \\$TEST_EXIT
+            kill \\$APP_PID || true
+            exit \\$TEST_EXIT
           "
         '''
       }
