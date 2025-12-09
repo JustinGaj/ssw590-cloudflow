@@ -11,13 +11,20 @@ pipeline {
             steps { checkout scm } 
         }
 
-        stage('Install & Test') {
-            steps {
+    stage('Install & Test') {
+        steps {
+            sh '''
                 echo "Running tests in node container"
-                // Mounting $PWD to /work ensures package-lock.json is found in the root
-                sh 'docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c "npm install && npm test"'
-            }
+                
+                # Use 'chmod' to ensure the container can read the files.
+                # We must run this step on the Jenkins host first.
+                chmod -R a+rwx .
+                
+                # Execute npm commands inside the container using the proper shell quoting.
+                docker run --rm -v "$PWD":/work -w /work node:20-slim sh -c "npm install && npm test"
+            '''
         }
+    }
 
         stage('Build & Version Image') {
             steps {
