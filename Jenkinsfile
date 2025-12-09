@@ -7,24 +7,47 @@ pipeline {
     }
 
     stages {
-        stage('Checkout') { 
-            steps { checkout scm } 
+        stages {
+        stage('Declarative: Checkout SCM') {
+            steps {
+                // Keep this one simple, it's just to get the Jenkinsfile
+                checkout scm
+            }
         }
 
-    stage('Install & Test') {
-        steps {
-            sh '''
-                echo "Running tests in node container"
-                
-                # Use chmod for safety (runs on host)
-                chmod -R a+rwx .
-                
-                # FINAL ATTEMPT: Hardcode the absolute workspace path
-                # This bypasses any shell variable ($PWD) or path resolution issues.
-                docker run --rm -u 0 -v /var/jenkins_home/workspace/cloudflow-pipeline:/work -w /work node:20-slim sh -c 'npm install && npm test'
-            '''
+        stage('Checkout') {
+            steps {
+                script {
+                    // Use a clean checkout to remove any old files or sub-directories
+                    // that might be hiding the true files.
+                    cleanWs() 
+                    
+                    // Force a full checkout again
+                    checkout([$class: 'GitSCM', 
+                        branches: [[name: '*/main']], 
+                        doGenerateSubmoduleConfigurations: false, 
+                        extensions: [], 
+                        submoduleCfg: [], 
+                        userRemoteConfigs: [[url: 'https://github.com/JustinGaj/ssw590-cloudflow.git']]])
+                }
+            }
         }
-    }
+        // ... rest of the stages follow ...
+
+      stage('Install & Test') {
+          steps {
+              sh '''
+                  echo "Running tests in node container"
+                  
+                  # Use chmod for safety (runs on host)
+                  chmod -R a+rwx .
+                  
+                  # FINAL ATTEMPT: Hardcode the absolute workspace path
+                  # This bypasses any shell variable ($PWD) or path resolution issues.
+                  docker run --rm -u 0 -v /var/jenkins_home/workspace/cloudflow-pipeline:/work -w /work node:20-slim sh -c 'npm install && npm test'
+              '''
+          }
+      }
 
       stage('Build & Version Image') {
           steps {
