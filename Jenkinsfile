@@ -8,7 +8,7 @@ pipeline {
         WORKSPACE_PATH = '/var/jenkins_home/workspace/cloudflow-pipeline' 
         
         // CRITICAL: Environment variables for DinD setup
-        DOCKER_HOST = 'tcp://127.0.0.1:2375' // Use 127.0.0.1 since we'll run DinD on the host
+        DOCKER_HOST = 'tcp://161.35.189.2/:2375' // Use 127.0.0.1 since we'll run DinD on the host
         // NOTE: We omit DOCKER_TLS_VERIFY to simplify the connection, 
         // assuming your Docker daemon is accessible without TLS (common in basic setups).
     }
