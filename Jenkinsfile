@@ -2,18 +2,27 @@ pipeline {
     agent {
         docker {
             image 'node:20-bullseye'
+            // Use the standard Docker image as a separate service for DinD
+            // The 'docker:dind' image is designed to run its own Docker daemon,
+            // bypassing host incompatibility issues like GLIBC.
+            args '--privileged'
+            label 'node-agent'
+            service('docker:dind')
         }
     }
 
     environment {
         IMAGE = 'cloudflowstocks/web' 
-        VERSION_BASE = '1.0'
-        // RE-ADDED: Define the absolute path to prevent shell resolution errors
+        VERSION_BASE = '1.0' 
         WORKSPACE_PATH = '/var/jenkins_home/workspace/cloudflow-pipeline' 
+        // CRITICAL: Set the Docker host environment variable to point to the DinD service
+        DOCKER_HOST = 'tcp://docker:2376'
+        DOCKER_CERT_PATH = '/certs/client' // Required for TLS
+        DOCKER_TLS_VERIFY = '1' // Required for TLS
     }
 
     stages {
-        // ... (Checkout Code and Install & Test stages are correct and unchanged) ...
+        // ... (Checkout Code and Install & Test stages are mostly unchanged, but now run against DinD) ...
         stage('Checkout Code') {
             steps {
                 script {
@@ -42,7 +51,7 @@ pipeline {
             }
         }
 
-        // Stage 3: Build the Docker Image and create a Semantic Version
+        // Stage 3: Build the Docker Image (Now using the DOCKER_HOST service)
         stage('Build & Version Image') {
             steps {
                 script {
@@ -50,21 +59,23 @@ pipeline {
                     env.TAG = "${VERSION_BASE}.${changelist}"
                     echo "Building Version: ${env.TAG}"
                     
-                    // CRITICAL FIX: Use the resolved $WORKSPACE_PATH variable instead of \$PWD
-                    sh "docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock -v ${WORKSPACE_PATH}:/work -w /work docker:latest docker build -t ${IMAGE}:${env.TAG} ."
+                    // Uses the DOCKER_HOST environment variable to talk to the DinD service
+                    sh "docker build -t ${IMAGE}:${env.TAG} ."
                 }
             }
         }
 
-        // Stage 4: Compile LaTeX documentation
+        // Stage 4: Compile LaTeX documentation (Simplified to rely on the agent's workspace)
         stage('Compile LaTeX') {
             agent {
                 docker {
                     image 'blang/latex:latest'
+                    label 'latex-agent'
                 }
             }
             steps {
-                sh "docker run --rm -u 0 -v ${WORKSPACE_PATH}:/work -w /work blang/latex:latest pdflatex latex.tex || echo 'LaTeX failed but continuing build'"
+                // Command runs directly inside the 'blang/latex:latest' container
+                sh 'pdflatex latex.tex || echo "LaTeX failed but continuing build"'
             }
         }
 
@@ -79,17 +90,16 @@ pipeline {
             }
         }
 
-        // Stage 6: Deploy to the host
+        // Stage 6: Deploy to the host (Now using the DOCKER_HOST service)
         stage('Deploy') {
             steps {
                 echo "Deploying container ${IMAGE}:${env.TAG}"
-                // CRITICAL FIX: Use the resolved ${WORKSPACE_PATH} variable instead of \$PWD
+                // Uses the DOCKER_HOST environment variable to talk to the DinD service
+                // NOTE: We change the exposed port from 80:8080 to 8080:8080 to avoid host port conflicts
                 sh """
-                    docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock -v ${WORKSPACE_PATH}:/work docker:latest sh -c "
-                        docker stop site-container || true; 
-                        docker rm site-container || true; 
-                        docker run -d --name site-container -p 80:8080 ${IMAGE}:${env.TAG}
-                    "
+                    docker stop site-container || true
+                    docker rm site-container || true
+                    docker run -d --name site-container -p 8080:8080 ${IMAGE}:${env.TAG}
                 """
             }
         }
