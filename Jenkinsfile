@@ -88,7 +88,7 @@ pipeline {
         }
       }
   }
-
+}
     // THIS SECTION SUMMARIZES FOR YOUR DEMO
     post {
         success {
