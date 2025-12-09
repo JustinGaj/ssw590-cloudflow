@@ -1,10 +1,9 @@
 pipeline {
     // CRITICAL FIX: Run the entire pipeline inside a known-good Node environment.
     // This fixes the volume mount and path issues by running npm directly.
-    agent {
+agent {
         docker {
-            image 'node:20-slim'
-            // Add other tools needed (like Docker) to the container, if required for later stages
+            image 'node:20-bullseye' // Use the full image
             args '-u 0 -v /var/run/docker.sock:/var/run/docker.sock' 
         }
     }
