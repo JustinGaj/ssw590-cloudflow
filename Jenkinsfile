@@ -97,7 +97,7 @@ pipeline {
           set -eux
           echo '--- 4. Compiling Documentation using docker cp ---'
           
-          CONTAINER_NAME="latex-builder-$$" # Use $$ for unique container ID
+          CONTAINER_NAME="latex-builder-$$"
 
           # 1. Launch container non-ephemerally in the background
           docker run -d --name ${CONTAINER_NAME} blang/latex:latest sleep 30
@@ -105,8 +105,13 @@ pipeline {
           # 2. Copy the source file IN to the container
           docker cp latex.tex ${CONTAINER_NAME}:/tmp/latex.tex
           
+          # --- CRITICAL FIX: Copy the required dependency file IN ---
+          docker cp VERSION.txt ${CONTAINER_NAME}:/tmp/VERSION.txt
+          
           # 3. Execute compilation inside the container
-          docker exec ${CONTAINER_NAME} pdflatex /tmp/latex.tex
+          # We must compile twice because of the \input command
+          docker exec ${CONTAINER_NAME} pdflatex -output-directory /tmp /tmp/latex.tex
+          docker exec ${CONTAINER_NAME} pdflatex -output-directory /tmp /tmp/latex.tex
           
           # 4. Copy the resulting PDF OUT to the Jenkins workspace (PWD)
           docker cp ${CONTAINER_NAME}:/tmp/latex.pdf ./latex.pdf
