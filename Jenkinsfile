@@ -151,7 +151,7 @@ pipeline {
       steps {
         echo "--- Deployment to Host Docker (Exposing 80) ---"
         // Stop and remove old container, then run new image
-        sh "docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c 'docker stop site-container || true; docker rm site-container || true; docker run -d --name site-container -p 80:8080 ${IMAGE}:${TAG}'"
+        sh "docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock docker:latest sh -c 'docker stop site-container || true; docker rm site-container || true; docker run -d --name site-container -p 8081:8080 ${IMAGE}:${TAG}'"
       }
     }
   }
