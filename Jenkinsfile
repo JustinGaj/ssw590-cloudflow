@@ -95,34 +95,37 @@ pipeline {
       steps {
           sh '''
           set -eux
-          # Use the current Jenkins workspace as the volume mount (-v $PWD:/data)
+          echo '--- Workspace contents BEFORE Docker run ---'
+          # List contents to prove the file exists in the PWD
+          ls -alF
+          
+          # 1. Pre-check: If this fails, the file definitely isn't there.
+          if [ ! -f latex.tex ]; then
+              echo 'FATAL ERROR: latex.tex not found in Jenkins workspace (PWD). Cannot continue.'
+              exit 1 
+          fi
+          
           echo '--- 4. Compiling LaTeX Output using shared volume ---'
           
+          # Mounts the host workspace ($PWD) as /data inside the container
           docker run --rm -u 0 -v $PWD:/data blang/latex:latest bash -lc "
               # Change directory to the mounted workspace
               cd /data &&
-              
-              # Check for the source file
-              if [ ! -f latex.tex ]; then
-                  echo 'Error: latex.tex file not found in the workspace.'
-                  exit 1
-              fi
               
               # Run pdflatex. Output will appear directly in the workspace (/data)
               pdflatex latex.tex
           "
           
-          # Now, check the file directly in the Jenkins workspace (PWD)
+          # 2. Post-check: Verify output file exists on the host
           if [ -f ./latex.pdf ]; then
               echo 'Documentation artifact saved: latex.pdf'
           else
               echo 'FAILURE: latex.pdf was not produced by the container.'
-              # Exit non-zero to fail the stage if the artifact is critical
               exit 1 
           fi
           '''
       }
-     }
+    }
     
     // 4. Build Visibility & 6. Versioned Deployment Artifact: ZIP Package
     stage('Package Artifact (Host)') {
