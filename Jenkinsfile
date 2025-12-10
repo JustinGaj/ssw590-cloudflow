@@ -93,27 +93,36 @@ pipeline {
     // 4. Build Visibility: Compiling LaTeX documentation
     stage('Compile Documentation (LaTeX Container)') {
       steps {
-        sh '''
+          sh '''
           set -eux
-          rm -f /tmp/latex-${BUILD_ID}.pdf || true
+          # Use the current Jenkins workspace as the volume mount (-v $PWD:/data)
+          echo '--- 4. Compiling LaTeX Output using shared volume ---'
           
-          echo '--- 4. Compiling LaTeX Output ---'
-          docker run --rm -u 0 -v /tmp:/tmp blang/latex:latest bash -lc "
-            rm -rf /tmp/repo || true
-            git clone ${GIT_REPO} /tmp/repo &&
-            cd /tmp/repo &&
-            pdflatex latex.tex && cp -f latex.pdf /tmp/latex-${BUILD_ID}.pdf || true
+          docker run --rm -u 0 -v $PWD:/data blang/latex:latest bash -lc "
+              # Change directory to the mounted workspace
+              cd /data &&
+              
+              # Check for the source file
+              if [ ! -f latex.tex ]; then
+                  echo 'Error: latex.tex file not found in the workspace.'
+                  exit 1
+              fi
+              
+              # Run pdflatex. Output will appear directly in the workspace (/data)
+              pdflatex latex.tex
           "
           
-          if [ -f /tmp/latex-${BUILD_ID}.pdf ]; then
-            mv /tmp/latex-${BUILD_ID}.pdf ./latex.pdf
-            echo 'Documentation artifact saved: latex.pdf'
+          # Now, check the file directly in the Jenkins workspace (PWD)
+          if [ -f ./latex.pdf ]; then
+              echo 'Documentation artifact saved: latex.pdf'
           else
-            echo 'No latex.pdf produced; continuing.'
+              echo 'FAILURE: latex.pdf was not produced by the container.'
+              # Exit non-zero to fail the stage if the artifact is critical
+              exit 1 
           fi
-        '''
+          '''
       }
-    }
+     }
     
     // 4. Build Visibility & 6. Versioned Deployment Artifact: ZIP Package
     stage('Package Artifact (Host)') {
