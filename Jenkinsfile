@@ -92,39 +92,42 @@ pipeline {
 
     // 4. Build Visibility: Compiling LaTeX documentation
     stage('Compile Documentation (LaTeX Container)') {
-      steps {
-          sh '''
-          set -eux
-          echo '--- Workspace contents BEFORE Docker run ---'
-          # List contents to prove the file exists in the PWD
-          ls -alF
-          
-          # 1. Pre-check: If this fails, the file definitely isn't there.
-          if [ ! -f latex.tex ]; then
-              echo 'FATAL ERROR: latex.tex not found in Jenkins workspace (PWD). Cannot continue.'
-              exit 1 
-          fi
-          
-          echo '--- 4. Compiling LaTeX Output using shared volume ---'
-          
-          # Mounts the host workspace ($PWD) as /data inside the container
-          docker run --rm -u 0 -v $PWD:/data blang/latex:latest bash -lc "
-              # Change directory to the mounted workspace
-              cd /data &&
-              
-              # Run pdflatex. Output will appear directly in the workspace (/data)
-              pdflatex latex.tex
-          "
-          
-          # 2. Post-check: Verify output file exists on the host
-          if [ -f ./latex.pdf ]; then
-              echo 'Documentation artifact saved: latex.pdf'
-          else
-              echo 'FAILURE: latex.pdf was not produced by the container.'
-              exit 1 
-          fi
-          '''
-      }
+        steps {
+            sh '''
+            set -eux
+            echo '--- Workspace contents BEFORE Docker run ---'
+            ls -alF
+            
+            # --- CRITICAL FIX: Force file synchronization ---
+            sync 
+            echo 'Filesystem sync complete.'
+            
+            # 1. Pre-check (Passed, but kept for verification)
+            if [ ! -f latex.tex ]; then
+                echo 'FATAL ERROR: latex.tex not found in Jenkins workspace (PWD). Cannot continue.'
+                exit 1 
+            fi
+            
+            echo '--- 4. Compiling LaTeX Output using shared volume ---'
+            
+            # Mounts the host workspace ($PWD) as /data inside the container
+            docker run --rm -u 0 -v $PWD:/data blang/latex:latest bash -lc "
+                # Change directory to the mounted workspace
+                cd /data &&
+                
+                # Run pdflatex. Output will appear directly in the workspace (/data)
+                pdflatex latex.tex
+            "
+            
+            # 2. Post-check: Verify output file exists on the host
+            if [ -f ./latex.pdf ]; then
+                echo 'Documentation artifact saved: latex.pdf'
+            else
+                echo 'FAILURE: latex.pdf was not produced by the container.'
+                exit 1 
+            fi
+            '''
+        }
     }
     
     // 4. Build Visibility & 6. Versioned Deployment Artifact: ZIP Package
