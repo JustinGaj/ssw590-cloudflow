@@ -95,29 +95,27 @@ pipeline {
       steps {
           sh '''
           set -eux
-          echo '--- Workspace contents BEFORE Docker run ---'
-          ls -alF
+          echo '--- 4. Compiling Documentation using docker cp ---'
           
-          sync 
-          echo 'Filesystem sync complete.'
+          CONTAINER_NAME="latex-builder-$$" # Use $$ for unique container ID
+
+          # 1. Launch container non-ephemerally in the background
+          docker run -d --name ${CONTAINER_NAME} blang/latex:latest sleep 30
+
+          # 2. Copy the source file IN to the container
+          docker cp latex.tex ${CONTAINER_NAME}:/tmp/latex.tex
           
-          if [ ! -f latex.tex ]; then
-              echo 'FATAL ERROR: latex.tex not found in Jenkins workspace (PWD). Cannot continue.'
-              exit 1 
-          fi
+          # 3. Execute compilation inside the container
+          docker exec ${CONTAINER_NAME} pdflatex /tmp/latex.tex
           
-          echo '--- 4. Compiling LaTeX Output using shared volume ---'
+          # 4. Copy the resulting PDF OUT to the Jenkins workspace (PWD)
+          docker cp ${CONTAINER_NAME}:/tmp/latex.pdf ./latex.pdf
           
-          # --- FINAL FIX: Use Absolute Path inside container ---
-          docker run --rm -u 0 -v $PWD:/data blang/latex:latest bash -lc "
-              # Small delay to ensure mount is stable
-              sleep 0.5 && 
-              
-              # Execute pdflatex using absolute path inside the volume mount
-              pdflatex /data/latex.tex
-          "
+          # 5. Stop and Remove the container
+          docker stop ${CONTAINER_NAME}
+          docker rm ${CONTAINER_NAME}
           
-          # 2. Post-check: Verify output file exists on the host
+          # 6. Post-check: Verify output file exists on the host
           if [ -f ./latex.pdf ]; then
               echo 'Documentation artifact saved: latex.pdf'
           else
