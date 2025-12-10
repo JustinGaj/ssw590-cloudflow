@@ -108,8 +108,8 @@ pipeline {
           # --- CRITICAL FIX: Copy the required dependency file IN ---
           docker cp VERSION.txt ${CONTAINER_NAME}:/tmp/VERSION.txt
           
-          # 3. Execute compilation inside the container
-          # We must compile twice because of the \input command
+          # 3. Execute compilation inside the container (run twice for cross-refs/inputs)
+          # Use -output-directory to place output files in /tmp
           docker exec ${CONTAINER_NAME} pdflatex -output-directory /tmp /tmp/latex.tex
           docker exec ${CONTAINER_NAME} pdflatex -output-directory /tmp /tmp/latex.tex
           
