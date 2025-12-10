@@ -106,7 +106,7 @@ pipeline {
           docker cp latex.tex ${CONTAINER_NAME}:/tmp/latex.tex
           
           # --- CRITICAL FIX: Copy the required dependency file IN ---
-          docker cp VERSION.txt ${CONTAINER_NAME}:/tmp/VERSION.txt
+          docker cp VERSION ${CONTAINER_NAME}:/tmp/VERSION.txt
           
           # 3. Execute compilation inside the container (run twice for cross-refs/inputs)
           # Use -output-directory to place output files in /tmp
